@@ -1,0 +1,163 @@
+module alu_pipeline_top (
+    input  wire        clk,
+    input  wire        rst,
+    input  wire [7:0]  rs1,  
+    input  wire [7:0]  rs2,  
+    input  wire [7:0]  rd,
+    input  wire [7:0]  func,
+    input  wire [7:0]  addr,
+    input  wire        reg_write,
+    input  wire        mem_write,
+    output wire [15:0] Zout
+);
+    wire en1, en2, en3, en4;
+
+    alu_control ctrl(
+        .clk(clk), .rst(rst),
+        .en_stage1(en1), .en_stage2(en2),
+        .en_stage3(en3), .en_stage4(en4)
+    );
+
+    alu_datapath dp(
+        .clk(clk), .rst(rst),
+        .en_stage1(en1), .en_stage2(en2),
+        .en_stage3(en3), .en_stage4(en4),
+        .reg_write(reg_write), .mem_write(mem_write),
+        .rs1(rs1), .rs2(rs2), .rd(rd), .func(func), .addr(addr),
+        .Zout(Zout)
+    );
+endmodule
+
+
+module alu_datapath (
+    input  wire        clk,
+    input  wire        rst,
+
+    // Control signals
+    input  wire        en_stage1,
+    input  wire        en_stage2,
+    input  wire        en_stage3,
+    input  wire        en_stage4,
+    input  wire        reg_write,
+    input  wire        mem_write,
+
+    // Inputs
+    input  wire [7:0]  rs1,
+    input  wire [7:0]  rs2,
+    input  wire [7:0]  rd,
+    input  wire [7:0]  func,
+    input  wire [7:0]  addr,
+
+    // Output
+    output wire [15:0] Zout
+);
+
+    // Memory and Register File Arrays
+    reg [15:0] reg_file [0:255];
+    reg [15:0] mem [0:255];
+
+    // Pipeline latches
+    reg [15:0] L12_A, L12_B;
+    reg [7:0]  L12_rd, L12_func, L12_addr;
+    reg        L12_reg_write, L12_mem_write;
+
+    reg [15:0] L23_Z;
+    reg [7:0]  L23_rd, L23_addr;
+    reg        L23_reg_write, L23_mem_write;
+
+    reg [15:0] L34_Z;
+    reg [7:0]  L34_addr;
+    reg        L34_mem_write;
+
+    reg [15:0] L45_out; // Final output latch after memory
+
+    assign Zout = L45_out;
+
+    // Stage 1: Register Read & Latch Inputs
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            L12_A <= 0; L12_B <= 0;
+            L12_rd <= 0; L12_func <= 0; L12_addr <= 0;
+            L12_reg_write <= 0; L12_mem_write <= 0;
+        end else if (en_stage1) begin
+            L12_A <= reg_file[rs1]; // Read from register file
+            L12_B <= reg_file[rs2]; // Read from register file
+            L12_rd <= rd;
+            L12_func <= func;
+            L12_addr <= addr;
+            L12_reg_write <= reg_write;
+            L12_mem_write <= mem_write;
+        end
+    end
+
+    // Stage 2: ALU Execute
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            L23_Z <= 0; L23_rd <= 0; L23_addr <= 0;
+            L23_reg_write <= 0; L23_mem_write <= 0;
+        end else if (en_stage2) begin
+            case (L12_func)
+                8'd0:  L23_Z <= L12_A + L12_B;
+                8'd1:  L23_Z <= L12_A - L12_B;
+                8'd2:  L23_Z <= L12_A * L12_B;
+                8'd5:  L23_Z <= L12_A & L12_B;
+                8'd6:  L23_Z <= L12_A | L12_B;
+                8'd7:  L23_Z <= L12_A ^ L12_B;
+                default: L23_Z <= 0;
+            endcase
+            L23_rd <= L12_rd;
+            L23_addr <= L12_addr;
+            L23_reg_write <= L12_reg_write;
+            L23_mem_write <= L12_mem_write;
+        end
+    end
+
+    // Stage 3: Register Write Back & Forward Result
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            L34_Z <= 0; L34_addr <= 0; L34_mem_write <= 0;
+        end else if (en_stage3) begin
+            // Write back to Register File
+            if (L23_reg_write) begin
+                reg_file[L23_rd] <= L23_Z; 
+            end
+            
+            // Forward variables to Stage 4
+            L34_Z <= L23_Z;
+            L34_addr <= L23_addr;
+            L34_mem_write <= L23_mem_write;
+        end
+    end
+
+ // Stage 4: Memory Access & Final Latch
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            L45_out <= 0;
+        end else if (en_stage4) begin
+            if (L34_mem_write) begin
+                mem[L34_addr] <= L34_Z;  // Store to memory
+            end
+            
+            // Always forward the ALU result to Zout so we can see the math
+            L45_out <= L34_Z; 
+        end
+    end
+        
+endmodule
+
+module alu_control (
+    input  wire clk,
+    input  wire rst,
+    output reg  en_stage1,
+    output reg  en_stage2,
+    output reg  en_stage3,
+    output reg  en_stage4
+);
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            en_stage1 <= 0; en_stage2 <= 0; en_stage3 <= 0; en_stage4 <= 0;
+        end else begin
+            en_stage1 <= 1; en_stage2 <= 1; en_stage3 <= 1; en_stage4 <= 1;
+        end
+    end
+endmodule

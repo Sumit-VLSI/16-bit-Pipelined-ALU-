@@ -1,0 +1,68 @@
+module tb_alu_pipeline_top;
+    reg clk, rst;
+    reg [7:0] rs1, rs2; // Changed to 8-bit addresses
+    reg [7:0] rd, func, addr;
+    reg reg_write, mem_write;
+    wire [15:0] Zout;
+
+    alu_pipeline_top DUT(
+        .clk(clk), .rst(rst),
+        .rs1(rs1), .rs2(rs2),
+        .rd(rd), .func(func), .addr(addr),
+        .reg_write(reg_write), .mem_write(mem_write),
+        .Zout(Zout)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0; 
+        forever #5 clk = ~clk;
+    end
+
+    initial begin
+        $monitor("%0t | rs1_addr=%0d rs2_addr=%0d rd=%0d func=%0d | Zout=%0d",
+                 $time, rs1, rs2, rd, func, Zout);
+
+        // Initialize inputs
+        rst = 1; rs1 = 0; rs2 = 0; rd = 0; func = 0; addr = 0; 
+        reg_write = 0; mem_write = 0;
+
+        // Initialize the internal register file for testing
+        // Using hierarchical path to inject data directly into DUT
+// Initialize the internal register file for testing
+        DUT.dp.reg_file[0] = 16'd0;  // <-- ADD THIS LINE to fix NOP 'x's
+        DUT.dp.reg_file[1] = 16'd10;
+        DUT.dp.reg_file[2] = 16'd5;
+        DUT.dp.reg_file[3] = 16'd15;
+        @(posedge clk); @(posedge clk); 
+        rst = 0;
+
+        // Instruction 1: reg[1] + reg[2] (10 + 5) -> Write to reg[4]
+        @(posedge clk);
+        rs1 = 8'd1; rs2 = 8'd2; rd = 8'd4; func = 8'd0; 
+        reg_write = 1; mem_write = 0;
+
+        // Instruction 2: reg[3] - reg[2] (15 - 5) -> Write to reg[5]
+        @(posedge clk);
+        rs1 = 8'd3; rs2 = 8'd2; rd = 8'd5; func = 8'd1; 
+        reg_write = 1; mem_write = 0;
+
+        // Instruction 3: reg[1] * reg[2] (10 * 5) -> Store to Memory addr 10
+        @(posedge clk);
+        rs1 = 8'd1; rs2 = 8'd2; rd = 8'd0; func = 8'd2; 
+        reg_write = 0; mem_write = 1; addr = 8'd10;
+
+        // NOPs to flush pipeline
+        @(posedge clk); 
+        rs1 = 0; rs2 = 0; rd = 0; func = 0; addr = 0; 
+        reg_write = 0; mem_write = 0;
+
+        // Wait for pipeline stages to finish
+        repeat(6) @(posedge clk);
+        
+        // Optional: Check if memory store was successful
+        $display("Memory at address 10: %0d", DUT.dp.mem[10]);
+
+        $finish;
+    end
+endmodule
